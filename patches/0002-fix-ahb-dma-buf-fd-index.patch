@@ -1,0 +1,42 @@
+diff --git a/src/panfrost/vulkan/panvk_android.c b/src/panfrost/vulkan/panvk_android.c
+index 82f9638..a005cce 100644
+--- a/src/panfrost/vulkan/panvk_android.c
++++ b/src/panfrost/vulkan/panvk_android.c
+@@ -5,6 +5,9 @@
+ 
+ #include "panvk_android.h"
+ 
++#include <unistd.h>
++#include <stdio.h>
++
+ #include "panvk_device.h"
+ #include "panvk_image.h"
+ 
+@@ -257,7 +260,27 @@ panvk_android_import_ahb_memory(VkDevice device,
+    VK_FROM_HANDLE(vk_device, dev, device);
+    const native_handle_t *handle = AHardwareBuffer_getNativeHandle(ahb);
+    assert(handle && handle->numFds > 0);
++   /* PATCH: same fix as vk_common_GetAndroidHardwareBufferPropertiesANDROID
++    * in vk_android.c -- some gralloc implementations (u_gralloc fallback on
++    * MediaTek/Mali devices without a real vendor gralloc HAL) do not place
++    * the dma-buf fd at data[0]. Probe each fd via lseek(SEEK_END), which
++    * only succeeds on a real dma-buf, instead of assuming a fixed index. */
++   int dma_buf_index = 0;
+    int dma_buf_fd = handle->data[0];
++   off_t dma_buf_size = lseek(dma_buf_fd, 0, SEEK_END);
++   if (dma_buf_size <= 0) {
++      for (int _i = 1; _i < handle->numFds; _i++) {
++         off_t _sz = lseek(handle->data[_i], 0, SEEK_END);
++         if (_sz > 0) {
++            dma_buf_fd = handle->data[_i];
++            dma_buf_size = _sz;
++            dma_buf_index = _i;
++            break;
++         }
++      }
++   }
++   fprintf(stderr, "PANVK_ANDROID_DEBUG: dma_buf_index=%d (de %d fds) dma_buf_fd=%d dma_buf_size=%lld data[0]=%d\n",
++           dma_buf_index, handle->numFds, dma_buf_fd, (long long)dma_buf_size, handle->data[0]);
+    VkResult result;
+ 
+    VkImage img_handle = VK_NULL_HANDLE;

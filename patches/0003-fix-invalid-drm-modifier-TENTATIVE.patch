@@ -1,0 +1,25 @@
+diff --git a/src/panfrost/vulkan/panvk_image.c b/src/panfrost/vulkan/panvk_image.c
+index 892f301..a64c5d7 100644
+--- a/src/panfrost/vulkan/panvk_image.c
++++ b/src/panfrost/vulkan/panvk_image.c
+@@ -320,6 +320,20 @@ panvk_image_get_explicit_mod(
+ {
+    uint64_t mod = explicit->drmFormatModifier;
+ 
++   /* PATCH: fallback (non-vendor) gralloc implementations report
++    * DRM_FORMAT_MOD_INVALID when no real tiling modifier is known (no
++    * vendor gralloc HAL present, e.g. testing via Termux without a
++    * complete vendor Android image). Substitute the universally
++    * supported LINEAR modifier instead of propagating an unusable
++    * sentinel value that panvk_image_init_layouts() isn't prepared to
++    * handle -- this was a silent NULL/invalid-modifier crash in release
++    * builds, since the guarding assert() below is a no-op under NDEBUG. */
++   if (mod == DRM_FORMAT_MOD_INVALID) {
++      fprintf(stderr, "PANVK_IMAGE_DEBUG: explicit modifier was INVALID, "
++              "substituting DRM_FORMAT_MOD_LINEAR\n");
++      mod = DRM_FORMAT_MOD_LINEAR;
++   }
++
+    assert(!vk_format_is_depth_or_stencil(image->vk.format));
+    assert(image->vk.samples == 1);
+    assert(image->vk.array_layers == 1);
