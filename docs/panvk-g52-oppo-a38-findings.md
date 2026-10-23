@@ -161,7 +161,7 @@ Análisis con `nm`/`objdump -dr` (símbolos no eliminados, reubicaciones intacta
   efecto (nunca se copian).
 - **Máscara real de `core_req`: `0x61F`.** En `jd_run_atom`, `core_req` vive en el offset interno `0x124`
   del struct del atom, y se enmascara contra `0x61F` para decidir si el atom se completa sin tocar
-  hardware — confirma con un valor concreto lo que Luken describió en abstracto sobre
+  hardware — confirma con un valor concreto lo que Luke describió en abstracto sobre
   `BASE_JD_REQ_ATOM_TYPE`.
 - **Bit 17 de `core_req` dispara clasificación de "renderpass".** Dentro de `kbasep_js_add_job`, el bit
   17 (`0x20000`) activa una rama de código que compara un campo interno del atom contra el mismo campo

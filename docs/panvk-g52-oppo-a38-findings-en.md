@@ -160,7 +160,7 @@ Analysis with `nm`/`objdump -dr` (symbols not stripped, relocations intact):
   an effect (it's the struct's last real field); and why 56-63 had no effect (never copied at all).
 - **Real `core_req` mask: `0x61F`.** In `jd_run_atom`, `core_req` lives at internal struct offset
   `0x124`, and is masked against `0x61F` to decide whether the atom completes without touching hardware
-  — a concrete value confirming what Luken described in the abstract about `BASE_JD_REQ_ATOM_TYPE`.
+  — a concrete value confirming what Luke described in the abstract about `BASE_JD_REQ_ATOM_TYPE`.
 - **Bit 17 of `core_req` triggers "renderpass" classification.** Inside `kbasep_js_add_job`, bit 17
   (`0x20000`) activates a code branch that compares an internal atom field against the same field of its
   dependency atom (`pre_dep`) — the classic pattern for pairing atoms of the same rendering pass,

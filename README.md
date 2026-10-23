@@ -16,6 +16,10 @@ Full detail (English + Spanish), including the complete debugging methodology an
 ⚠️ Experimental. `panvk` itself prints `WARNING: panvk is not a conformant Vulkan implementation,
 testing use only.` No claim of conformance or game compatibility is made here.
 
+**Note on authorship:** this research is AI-assisted. Every measurement was run on the author's device, and the community projects named below are key references. Read the claims as reports and verify them before relying on them.
+
+**Reproducing note:** `-Dbuildtype=release` defines `NDEBUG`, which turns every `assert()` in the patched driver code into a no-op. In our runs `vkQueueSubmit` and `vkQueueWaitIdle` reported success even when a job had faulted, until the real `event_code` was printed. Check the event code, not only the Vulkan result.
+
 ## Device
 
 | | Redmi 13C (original project) | **Oppo A38 (this repo)** | Infinix X6853 (G57 reference) |
@@ -59,6 +63,8 @@ corrected in `patches/0001-fix-kbase-stride-and-core-req.patch`.
 
 **Patch:** `patches/0001-fix-kbase-stride-and-core-req.patch` (touches
 `src/panfrost/vulkan/jm/panvk_vX_gpu_queue.c`).
+
+**Caveat:** patch 0001 hardcodes `56`, which is right for UAPI 11.46 (this device) but not for every kernel: the Redmi 13C (UAPI 11.38) uses 48. A runtime probe is the portable approach, and FristOneRR's driver implements one (see Field notes).
 
 ### 2. `panvk_android_import_ahb_memory()`: dma-buf fd not always at `data[0]`
 
@@ -195,7 +201,7 @@ What happened when other projects' drivers were run on this phone (Winlator, AIO
 
 | Driver | What happened |
 |---|---|
-| [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) r3 | Loads and enumerates the GPU (151 extensions). The D3D11 cube does not render: the X server returns a `BadMatch` error (request major code 153) at the first present. With `MESA_VK_WSI_DEBUG=sw` it renders (about 50 FPS); `linear` and `noshm` still fail. Its gralloc parser logs "unknown handle layout" for this phone (see Finding 3). |
+| [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) r3 (an r4 has since been published; not tested here) | Loads and enumerates the GPU (151 extensions). The D3D11 cube does not render: the X server returns a `BadMatch` error (request major code 153) at the first present. With `MESA_VK_WSI_DEBUG=sw` it renders (about 50 FPS); `linear` and `noshm` still fail. Its gralloc parser logs "unknown handle layout" for this phone (see Finding 3). |
 | [FristOneRR/FristOneRR-Panvk-Driver](https://github.com/FristOneRR/FristOneRR-Panvk-Driver), first test | D3D9, D3D10 and D3D11 test cubes render with DXVK 1.x. DXVK 2.x does not start: `VK_EXT_robustness2` is not exposed on Bifrost. |
 | FristOneRR 3.0 (driver + wrapper, Oct 2026) | D3D9 to D3D11 cubes render. The log shows the runtime atom-stride probe choosing 56, "Using fallback gralloc implementation" and no gralloc warnings. |
 
