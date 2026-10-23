@@ -432,28 +432,76 @@ mismo incluso si `LINEAR` no es en realidad el layout que el hardware o un consu
 textura real con mipmaps, un formato comprimido, o cualquier cosa fuera de este mismo proceso) esperaría.
 **Este hallazgo queda marcado como fix tentativo, no como solución confirmada** — desbloqueó el
 progreso y permitió llegar hasta aquí, pero la causa raíz de por qué `LINEAR` sería incorrecto (y cuál
-sería la sustitución correcta) sigue sin investigarse.
+sería la sustitución correcta) no estaba investigada en ese momento (ver el seguimiento más abajo).
+
+## Seguimiento: medir el handle de gralloc en vez de suponer (parche 0004)
+
+La advertencia del proyecto G720 era correcta, y la pregunta abierta resultó ser medible: qué produce realmente el allocator y dónde lo dice el handle.
+
+**Hacia dónde apuntaba la investigación.** [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers) interpreta directamente el handle de gralloc de ARM. Un "alloc format" de 64 bits guarda el formato HAL en la palabra baja y los bits de layout (AFBC) en la alta; el allocator de MediaTek de un Galaxy A31 se comparó contra `0x311`. Solo conserva `LINEAR` como respaldo para handles que no reconoce. Su parser busca la información del plano en magic+15 (Exynos) o magic+21 (A31). En este teléfono registra "unknown handle layout" (Winlator, `mali-panvk` r3), porque aquí está en magic+16.
+
+**Método.** Programas pequeños alocan `AHardwareBuffer`s con el allocator del sistema y vuelcan el handle nativo (`AHardwareBuffer_getNativeHandle`): una primera prueba (`tests/panvk-driver-patch/ahb_handle_probe.c`: 64x64 y 500x500, tres usages) y `tests/panvk-driver-patch/ahb_probe2.c` (200x100, RGBA8 y RGBX8, ocho combinaciones de usage).
+
+**Layout del handle en el A38** (3 fds, 62 ints). fd0 no reporta tamaño (`-1`; el código de JimVulkan indica que MediaTek pone `-1` primero), fd1 es el buffer, fd2 es una región de 6480 bytes en todas las muestras. Entre los ints: magic `0x3141592` en `ints[18]`, el alloc format (u64) en `ints[29..30]` y `{stride en bytes, ancho, alto}` del plano 0 en `ints[34..36]`. Otros ints también cambian en los buffers comprimidos (por ejemplo `ints[14]` e `ints[30]`); no se decodificaron.
+
+**Resultados** (200x100):
+
+| usage | alloc format (palabra alta) | tamaño del buffer | layout |
+|---|---|---|---|
+| solo `GPU_SAMPLED` | `0` | 86016 | lineal |
+| `SAMPLED + COLOR` con lectura CPU, escritura CPU o `COMPOSER_OVERLAY` | `0` | 86016 | lineal |
+| solo `COLOR`, `SAMPLED + COLOR`, `SAMPLED + COLOR + NO_AFBC` | `0xc410000` | 135168 | comprimido |
+
+La palabra alta separa los dos casos en 16 de 16 muestras (RGBA8 y RGBX8 dieron resultados idénticos). La primera prueba muestra el mismo patrón: 64x64 con lectura CPU son 16384 bytes y solo-GPU son 69632 (128x128x4 + 4096); 500x500 son 1024000 frente a 1064960 (512x512x4 + 16384).
+
+La aritmética cuadra: el buffer lineal tiene 208 px x 4 = 832 bytes de stride, 83200 bytes, redondeados a 21 páginas. El otro es 256x128 (alineado a 128) x 4 = 131072 bytes de cuerpo más 4096 de header, consistente con AFBC (superbloques de 16x16, headers en tiles). Las flags del modifier **no** se verificaron. El bit privado `NO_AFBC` (`1 << 29`) no tiene efecto en este allocator; basta el uso de CPU o del composer para que el buffer sea lineal, lo que coincide con las notas de JimVulkan sobre el allocator de MediaTek.
+
+**El parche 0004** (`src/util/u_gralloc/u_gralloc_fallback.c`) actúa solo cuando el handle encaja con esa huella (3 fds, 62 ints, magic en `ints[18]`). Palabra alta `0` y stride del plano igual a `pixel_stride x bpp` dan `DRM_FORMAT_MOD_LINEAR`. Una palabra alta distinta de cero se rechaza con un error explícito. Cualquier otro handle se comporta como antes.
+
+Verificado en el dispositivo:
+
+```
+info.modifier=0x0
+pixel central despues del clear: R=0 G=0 B=255 A=255        (panvk_ahb_image_test, uso de CPU + composer)
+
+MESA: error: ARM gralloc: compressed buffer (alloc format 0xc410000:00000001) is not handled
+FAILED vkAllocateMemory ...: VkResult=-1000072003            (panvk_ahb_image_test_gpuonly, VK_ERROR_INVALID_EXTERNAL_HANDLE)
+```
+
+**Callejones sin salida y correcciones.**
+- Se sugirió que el buffer del test original probablemente era AFBC y que por eso `LINEAR` estaba mal. No lo era: el test pide `CPU_READ_RARELY`, que mantiene el buffer lineal. El parche 0003 acertaba para ese buffer, solo que sin demostrarlo.
+- Se consideró la interposición del símbolo `hw_get_module` dentro de un proceso Android real como la razón por la que el gralloc de otro proyecto funcionaba. Descartado: ese driver también registra "Using fallback gralloc implementation" dentro de Winlator.
+- Añadir `NO_AFBC` al usage del test era innecesario en este allocator (ver arriba).
+
+**Lo que sigue siendo una suposición.**
+- El parche 0003 sigue siendo necesario cuando quien llama pasa un `DRM_FORMAT_MOD_INVALID` explícito, como hace el wrapper de Winlator según el README de LukeValen. En ese camino no hay handle que inspeccionar, y `LINEAR` sería incorrecto para un buffer solo-GPU.
+- La huella está confirmada solo en el A38.
+- La evidencia de "lineal" es la correlación medida; la lectura del pixel sigue pasando por el mismo driver. Falta una comprobación independiente con `AHardwareBuffer_lock()`.
+- Los buffers comprimidos se rechazan, no se soportan.
+
+**Observaciones relacionadas en el mismo dispositivo** (detalle en el README, "Field notes"): el driver de FristOneRR elige de forma independiente el stride 56 en el A38 y renderiza cubos de prueba de D3D9 a D3D11 en Winlator; el README de LukeValen documenta el modifier `INVALID` que pone el wrapper y un arreglo de `SYNC_FD`; las notas de JimVulkan dicen que el kernel de MediaTek rechaza los ioctls de sync de DRM.
 
 ## Estado: investigación activa
 
 Con esto, este reporte no solo alcanza paridad con el estado público del proyecto de Luke — lo supera en
-un punto concreto y verificado. De aquí en adelante, cualquier hallazgo adicional es investigación
-independiente de esta sesión, no una repetición de algo ya documentado en otro lado.
+un punto concreto y verificado. El seguimiento de gralloc se apoya en el análisis previo de JimVulkan sobre el layout del handle de ARM; lo nuevo aquí es la tabla de mediciones del A38 y la huella del handle. Otros proyectos ya han acreditado o reproducido de forma independiente partes de este trabajo (ver README, "Field notes" y "Credits").
 
 ## Próximos pasos sugeridos
 
-1. **Reportar el fix del stride a Luken y al mantenedor de `apply_kbase_patch.py`** — es el hallazgo más
+1. **Reportar el fix del stride a LukeValen y al mantenedor de `apply_kbase_patch.py`** (el driver de FristOneRR ya sondea el stride en ejecución y acredita este repo) — es el hallazgo más
    importante de toda la sesión: el valor `64` (copiado del fork G57 sin verificar contra el tamaño real
    del struct para esta UAPI) es la causa del `JOB_CONFIG_FAULT`, no ningún problema de hardware. Vale
    la pena implementar el probe dinámico sugerido arriba en vez de fijar 56 como nuevo valor hardcodeado.
-2. Continuar con la Fase 7 de Luke (draw call real, offscreen) ahora que compute funciona en este
-   dispositivo — el mismo patrón de fix (verificar el stride real en vez de asumirlo) probablemente
-   aplique igual ahí.
+2. Hecho: la Fase 7 de Luke (draw call real, offscreen) se replicó en este dispositivo sin cambios (ver "Fases 4-9" más arriba).
 3. Reportar el bug de `core_req=0x04` en `apply_kbase_patch.py` al mantenedor (ya corregido a `0x16`
    para esta sesión).
 4. Recomendar añadir una nota en el README sobre el efecto de `NDEBUG` en los `assert()` de verificación
    — sin la instrumentación manual que agregamos, este mismo fix habría sido invisible (el build en
    `release` reportaba éxito incluso con el `stride` incorrecto).
+
+5. Verificar el caso lineal de forma independiente (`AHardwareBuffer_lock()` sobre un buffer legible por CPU) en vez de leer a través del mismo driver.
+6. Decidir qué hacer con un `DRM_FORMAT_MOD_INVALID` explícito que ponga un wrapper (el parche 0003 sigue siendo una suposición ahí); una opción es comprobar el handle importado cuando se enlaza la memoria.
+7. Compartir el layout del handle del A38 (plano en magic+16, alloc format en magic+11, la tabla de usages) con los proyectos cuyos parsers no lo reconocen.
 
 ## Entorno de referencia (para reproducir)
 
@@ -463,3 +511,4 @@ independiente de esta sesión, no una repetición de algo ya documentado en otro
 - `libvulkan_panfrost.so` resultante: ~20MB, 1014 targets, sin errores
 - Fixes aplicados sobre `funnymdzz/mesa`: `core_req` de la cadena vertex/tiler/compute corregido de
   `0x04` a `0x16`; `stride` de `KBASE_IOCTL_JOB_SUBMIT` corregido de `64` a `56`
+- Build de plataforma Android (`-Dplatforms=android`): ver el README, "Build configuration that worked".

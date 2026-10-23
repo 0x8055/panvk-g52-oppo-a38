@@ -15,6 +15,11 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include "vulkan/vulkan.h"
 
+/* PATCH: misma estrategia que panvk_physical_device.c (JimVulkan) aplica a los
+ * buffers de swapchain: en el allocator de MediaTek, NO_AFBC solo no basta para
+ * un buffer render+texture; con composer usage fuerza layout lineal. */
+#define MALI_GRALLOC_USAGE_NO_AFBC (1ULL << 29)
+
 #define CHECK(x, msg) do { VkResult r = (x); if (r != VK_SUCCESS) { printf("FAILED %s: VkResult=%d\n", msg, r); return 1; } printf("%s ok\n", msg); } while (0)
 
 typedef int  (*PFN_AHB_allocate)(const AHardwareBuffer_Desc*, AHardwareBuffer**);
@@ -31,7 +36,8 @@ int main(void) {
     desc.width = 64; desc.height = 64; desc.layers = 1;
     desc.format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM;
     desc.usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE | AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT |
-                 AHARDWAREBUFFER_USAGE_CPU_READ_RARELY;
+                 AHARDWAREBUFFER_USAGE_CPU_READ_RARELY |
+                 AHARDWAREBUFFER_USAGE_COMPOSER_OVERLAY | MALI_GRALLOC_USAGE_NO_AFBC;
 
     AHardwareBuffer *buf = NULL;
     int ret = AHB_allocate(&desc, &buf);

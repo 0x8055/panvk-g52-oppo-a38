@@ -1,0 +1,63 @@
+--- a/src/util/u_gralloc/u_gralloc_fallback.c
++++ b/src/util/u_gralloc/u_gralloc_fallback.c
+@@ -97,6 +97,44 @@
+    return 0;
+ }
+ 
++/* PATCH 0004: ARM gralloc handle as laid out by MediaTek's allocator on the
++ * Oppo A38 (MT6768, Android 15), measured with ahb_probe2.c: 3 fds + 62 ints,
++ * magic at ints[18]; the u64 "alloc format" is at magic+11 (low word: HAL
++ * format, high word: 0 for linear buffers, 0xc410000 for the compressed
++ * GPU-only ones); plane 0 byte stride is at magic+16.
++ * Returns 0 if the handle is not recognised (caller keeps its old behaviour),
++ * 1 if it is recognised and linear, -EINVAL if it holds a compressed buffer. */
++#define ARM_GRALLOC_MAGIC     0x3141592u
++#define ARM_A38_NUM_FDS       3
++#define ARM_A38_NUM_INTS      62
++#define ARM_A38_MAGIC_AT      18
++#define ARM_A38_ALLOC_FORMAT  11
++#define ARM_A38_PLANE0_STRIDE 16
++
++static int
++arm_gralloc_a38_classify(const native_handle_t *handle, int expected_stride)
++{
++   if (handle->numFds != ARM_A38_NUM_FDS || handle->numInts != ARM_A38_NUM_INTS)
++      return 0;
++
++   const int *h = &handle->data[handle->numFds + ARM_A38_MAGIC_AT];
++   if ((uint32_t)h[0] != ARM_GRALLOC_MAGIC)
++      return 0;
++
++   const uint32_t alloc_lo = (uint32_t)h[ARM_A38_ALLOC_FORMAT];
++   const uint32_t alloc_hi = (uint32_t)h[ARM_A38_ALLOC_FORMAT + 1];
++   if (alloc_hi != 0) {
++      mesa_loge("ARM gralloc: compressed buffer (alloc format 0x%x:%08x) "
++                "is not handled", alloc_hi, alloc_lo);
++      return -EINVAL;
++   }
++
++   if (expected_stride <= 0 || h[ARM_A38_PLANE0_STRIDE] != expected_stride)
++      return 0;
++
++   return 1;
++}
++
+ static int
+ fallback_gralloc_get_buffer_info(struct u_gralloc *gralloc,
+                                  struct u_gralloc_buffer_handle *hnd,
+@@ -156,6 +194,15 @@
+    }
+ #endif
+ 
++   /* PATCH 0004: replace the blind INVALID with what the handle says. */
++   {
++      const int arm = arm_gralloc_a38_classify(hnd->handle, stride);
++      if (arm < 0)
++         return arm;
++      if (arm > 0)
++         out->modifier = DRM_FORMAT_MOD_LINEAR;
++   }
++
+    return 0;
+ }
+ 
