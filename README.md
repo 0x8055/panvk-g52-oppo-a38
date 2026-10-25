@@ -101,7 +101,7 @@ Without a real vendor gralloc HAL (`"No gralloc hwmodule detected"`, expected wh
 
 **What is still an assumption:**
 - Patch 0003 is still needed when the *caller* passes an explicit `DRM_FORMAT_MOD_INVALID`, as Winlator's wrapper does according to [LukeValen's README](https://github.com/LukeValen/panvk-mali-g52). In that path there is no handle to inspect, `LINEAR` is unverified, and it would be wrong for a GPU-only buffer.
-- The fingerprint is only confirmed on the A38 (the Winlator dump of JimVulkan's driver on this same phone has the same shape).
+- The fingerprint is only confirmed on the A38 (the dump logged by a build of JimVulkan's `mesa-unified-drivers` on this same phone has the same shape).
 - The test's pixel readback still goes through the same driver. The evidence for "linear" is the measured correlation; an independent `AHardwareBuffer_lock()` check is still pending.
 - Compressed buffers are refused, not supported: no verified AFBC modifier exists for this allocator revision.
 
@@ -197,11 +197,12 @@ not hardcoded) to reproduce Finding 1 from scratch.
 
 ## Field notes: third-party drivers on the A38
 
-What happened when other projects' drivers were run on this phone (Winlator, AIO Graphics Test). These are reports, not endorsements, and the drivers change quickly.
+What happened when other projects' drivers were run on this phone (Winlator forks, AIO Graphics Test; the fork is named where it mattered). These are reports, not endorsements, and the drivers change quickly.
 
 | Driver | What happened |
 |---|---|
-| [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) r3 (an r4 has since been published; not tested here) | Loads and enumerates the GPU (151 extensions). The D3D11 cube does not render: the X server returns a `BadMatch` error (request major code 153) at the first present. With `MESA_VK_WSI_DEBUG=sw` it renders (about 50 FPS); `linear` and `noshm` still fail. Its gralloc parser logs "unknown handle layout" for this phone (see Finding 3). |
+| [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) release zips r3 and r4 (Winlator-Ludashi) | Swapchain creation fails with DXVK 1.x and 2.x. The log shows `ARM gralloc: no plane layout matches the handle (454x5, format 0xb32)` twice, then `invalid dmabuf size`. These builds refuse a handle they do not recognise. The numbers printed are the buffer's height, HAL format and usage read as width, height and format, which suggests the A38 header fields sit one int earlier than the parser expects. |
+| Build of [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers) at commit `a5010bb` (package from a Telegram channel; its `NOTICE.txt` credits JimVulkan) | Logs `unknown handle layout ... taken as linear` for this phone (see Finding 3). In Winlator-Ludashi it renders the AIO test with DXVK 1.x and 2.x. In Bannerlator the D3D11 cube does not render: the X server returns a `BadMatch` error (request major code 153) at the first present; with `MESA_VK_WSI_DEBUG=sw` it renders (about 50 FPS), while `linear` and `noshm` still fail. |
 | [FristOneRR/FristOneRR-Panvk-Driver](https://github.com/FristOneRR/FristOneRR-Panvk-Driver), first test | D3D9, D3D10 and D3D11 test cubes render with DXVK 1.x. DXVK 2.x does not start: `VK_EXT_robustness2` is not exposed on Bifrost. |
 | FristOneRR 3.0 (driver + wrapper, Oct 2026) | D3D9 to D3D11 cubes render. The log shows the runtime atom-stride probe choosing 56, "Using fallback gralloc implementation" and no gralloc warnings. |
 
@@ -219,7 +220,7 @@ bring-up; flagged the modifier issue in Finding 3.
 pointed to ARM's official GPLv2 kernel source, used to confirm Finding 1.
 - ARM Limited — `mali_kbase` kernel driver source (GPLv2), used to confirm the real
 `struct base_jd_atom_v2` layout.
-- [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) and [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers): Mesa 26.3 PanVK ports for Bifrost with MediaTek support. Its ARM gralloc handle analysis (the alloc-format AFBC bit, the `NO_AFBC` + composer usage observations) pointed the Finding 3 investigation in the right direction. In the revision tested here its handle parser does not recognise the A38 layout (plane info at magic+16, not +15/+21), which is why the measurements are published in Finding 3.
+- [JimVulkan/mali-panvk](https://github.com/JimVulkan/mali-panvk) and [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers): Mesa 26.3 PanVK ports for Bifrost with MediaTek support. Its ARM gralloc handle analysis (the alloc-format AFBC bit, the `NO_AFBC` + composer usage observations) pointed the Finding 3 investigation in the right direction. Neither the `mali-panvk` release builds (r3, r4) nor `mesa-unified-drivers` at `a5010bb` recognise the A38 handle layout (plane info at magic+16, not +15/+21; width, height and format one int earlier): the releases refuse the handle, the `a5010bb` build takes it as linear. That is why the measurements are published in Finding 3.
 - [FristOneRR/FristOneRR-Panvk-Driver](https://github.com/FristOneRR/FristOneRR-Panvk-Driver): Mali-G57-focused PanVK/kbase driver with runtime atom-stride probing. It credits this repo for the 56-byte stride finding, and its log on the A38 independently arrives at 56.
 - Icecream95 and the Panfrost/PanVK contributors — the underlying driver this all sits on top of.
 

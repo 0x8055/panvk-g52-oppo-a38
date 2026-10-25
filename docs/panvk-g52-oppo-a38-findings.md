@@ -438,7 +438,7 @@ sería la sustitución correcta) no estaba investigada en ese momento (ver el se
 
 La advertencia del proyecto G720 era correcta, y la pregunta abierta resultó ser medible: qué produce realmente el allocator y dónde lo dice el handle.
 
-**Hacia dónde apuntaba la investigación.** [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers) interpreta directamente el handle de gralloc de ARM. Un "alloc format" de 64 bits guarda el formato HAL en la palabra baja y los bits de layout (AFBC) en la alta; el allocator de MediaTek de un Galaxy A31 se comparó contra `0x311`. Solo conserva `LINEAR` como respaldo para handles que no reconoce. Su parser busca la información del plano en magic+15 (Exynos) o magic+21 (A31). En este teléfono registra "unknown handle layout" (Winlator, `mali-panvk` r3), porque aquí está en magic+16.
+**Hacia dónde apuntaba la investigación.** [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers) interpreta directamente el handle de gralloc de ARM. Un "alloc format" de 64 bits guarda el formato HAL en la palabra baja y los bits de layout (AFBC) en la alta; el allocator de MediaTek de un Galaxy A31 se comparó contra `0x311`. Solo conserva `LINEAR` como respaldo para handles que no reconoce. Su parser busca la información del plano en magic+15 (Exynos) o magic+21 (A31). En este teléfono un build del commit `a5010bb` registra "unknown handle layout" (Bannerlator), y las releases r3 y r4 de `mali-panvk` rechazan el handle por completo ("no plane layout matches the handle"), porque aquí la información del plano está en magic+16 y el ancho, el alto y el formato un int antes de lo que el parser espera.
 
 **Método.** Programas pequeños alocan `AHardwareBuffer`s con el allocator del sistema y vuelcan el handle nativo (`AHardwareBuffer_getNativeHandle`): una primera prueba (`tests/panvk-driver-patch/ahb_handle_probe.c`: 64x64 y 500x500, tres usages) y `tests/panvk-driver-patch/ahb_probe2.c` (200x100, RGBA8 y RGBX8, ocho combinaciones de usage).
 
@@ -470,7 +470,7 @@ FAILED vkAllocateMemory ...: VkResult=-1000072003            (panvk_ahb_image_te
 
 **Callejones sin salida y correcciones.**
 - Se sugirió que el buffer del test original probablemente era AFBC y que por eso `LINEAR` estaba mal. No lo era: el test pide `CPU_READ_RARELY`, que mantiene el buffer lineal. El parche 0003 acertaba para ese buffer, solo que sin demostrarlo.
-- Se consideró la interposición del símbolo `hw_get_module` dentro de un proceso Android real como la razón por la que el gralloc de otro proyecto funcionaba. Descartado: ese driver también registra "Using fallback gralloc implementation" dentro de Winlator.
+- Se consideró la interposición del símbolo `hw_get_module` dentro de un proceso Android real como la razón por la que el gralloc de otro proyecto funcionaba. Descartado: ese driver también registra "Using fallback gralloc implementation" dentro de Bannerlator y de Winlator-Ludashi.
 - Añadir `NO_AFBC` al usage del test era innecesario en este allocator (ver arriba).
 
 **Lo que sigue siendo una suposición.**
