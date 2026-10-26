@@ -476,7 +476,7 @@ FAILED vkAllocateMemory ...: VkResult=-1000072003            (panvk_ahb_image_te
 **Lo que sigue siendo una suposición.**
 - El parche 0003 sigue siendo necesario cuando quien llama pasa un `DRM_FORMAT_MOD_INVALID` explícito, como hace el wrapper de Winlator según el README de LukeValen. En ese camino no hay handle que inspeccionar, y `LINEAR` sería incorrecto para un buffer solo-GPU.
 - La huella está confirmada solo en el A38.
-- La evidencia de "lineal" es la correlación medida; la lectura del pixel sigue pasando por el mismo driver. Falta una comprobación independiente con `AHardwareBuffer_lock()`.
+- La evidencia de "lineal" empezó siendo la correlación medida, con la lectura del pixel pasando por el mismo driver. Después se confirmó de forma independiente con `AHardwareBuffer_lock()` (`tests/panvk-driver-patch/ahb_layout_check.c`, 200x100, stride 208 px, ambas direcciones más un clear de la GPU, 0 de 20000 píxeles distintos en cada fase). Ese test solo cubre buffers lineales y necesita un buffer de preparación HOST_COHERENT: con el tipo de memoria cacheado y no coherente (el tipo 1 en este dispositivo) informa de fallos falsos, que costaron dos explicaciones equivocadas antes de dar con la causa.
 - Los buffers comprimidos se rechazan, no se soportan.
 
 **Observaciones relacionadas en el mismo dispositivo** (detalle en el README, "Field notes"): el driver de FristOneRR elige de forma independiente el stride 56 en el A38 y renderiza cubos de prueba de D3D9 a D3D11 en Winlator; el README de LukeValen documenta el modifier `INVALID` que pone el wrapper y un arreglo de `SYNC_FD`; las notas de JimVulkan dicen que el kernel de MediaTek rechaza los ioctls de sync de DRM.
@@ -499,7 +499,7 @@ un punto concreto y verificado. El seguimiento de gralloc se apoya en el anális
    — sin la instrumentación manual que agregamos, este mismo fix habría sido invisible (el build en
    `release` reportaba éxito incluso con el `stride` incorrecto).
 
-5. Verificar el caso lineal de forma independiente (`AHardwareBuffer_lock()` sobre un buffer legible por CPU) en vez de leer a través del mismo driver.
+5. Hecho: el caso lineal se verificó de forma independiente con `AHardwareBuffer_lock()` (ver el seguimiento más arriba).
 6. Decidir qué hacer con un `DRM_FORMAT_MOD_INVALID` explícito que ponga un wrapper (el parche 0003 sigue siendo una suposición ahí); una opción es comprobar el handle importado cuando se enlaza la memoria.
 7. Compartir el layout del handle del A38 (plano en magic+16, alloc format en magic+11, la tabla de usages) con los proyectos cuyos parsers no lo reconocen.
 

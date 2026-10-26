@@ -464,7 +464,7 @@ FAILED vkAllocateMemory ...: VkResult=-1000072003            (panvk_ahb_image_te
 **Still an assumption.**
 - Patch 0003 is still needed when the caller passes an explicit `DRM_FORMAT_MOD_INVALID`, as Winlator's wrapper does according to LukeValen's README. There is no handle to inspect in that path, and `LINEAR` would be wrong for a GPU-only buffer.
 - The fingerprint is confirmed only on the A38.
-- The "linear" evidence is the measured correlation; the pixel readback still goes through the same driver. An independent `AHardwareBuffer_lock()` check is pending.
+- The "linear" evidence began as the measured correlation, with the pixel readback going through the same driver. It was then confirmed independently with `AHardwareBuffer_lock()` (`tests/panvk-driver-patch/ahb_layout_check.c`, 200x100, stride 208 px, both directions plus a GPU clear, 0 of 20000 pixels differing in each phase). That test only covers linear buffers, and it needs a HOST_COHERENT staging buffer: with the cached, non-coherent host type (memory type 1 on this device) it reports false failures, which cost two wrong explanations before the cause was found.
 - Compressed buffers are refused, not supported.
 
 **Related observations on the same device** (details in the README, "Field notes"): FristOneRR's driver independently chooses stride 56 on the A38 and renders D3D9 to D3D11 test cubes in Winlator; LukeValen's README documents the wrapper-supplied `INVALID` modifier and a `SYNC_FD` fix; JimVulkan's notes say MediaTek's kernel rejects the DRM sync ioctls.
@@ -488,7 +488,7 @@ beyond it on one concrete, verified point. The gralloc follow-up builds on JimVu
    without the manual instrumentation added here, this exact fix would have been invisible (the
    `release` build reported success even with the wrong stride).
 
-5. Verify the linear case independently (`AHardwareBuffer_lock()` on a CPU-readable buffer) instead of reading back through the same driver.
+5. Done: the linear case was verified independently with `AHardwareBuffer_lock()` (see the follow-up above).
 6. Decide what to do with an explicit `DRM_FORMAT_MOD_INVALID` supplied by a wrapper (patch 0003 is still an assumption there); one option is to check the imported handle when the memory is bound.
 7. Share the A38 handle layout (plane info at magic+16, alloc format at magic+11, the usage table) with the projects whose parsers do not recognise it.
 
