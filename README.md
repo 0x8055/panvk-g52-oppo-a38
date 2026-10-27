@@ -89,11 +89,13 @@ Without a real vendor gralloc HAL (`"No gralloc hwmodule detected"`, expected wh
 |---|---|---|---|
 | `GPU_SAMPLED` only | `0` | 86016 | linear |
 | `SAMPLED + COLOR` with CPU read, CPU write or `COMPOSER_OVERLAY` | `0` | 86016 | linear |
-| `COLOR` only, `SAMPLED + COLOR`, `SAMPLED + COLOR + NO_AFBC` | `0xc410000` | 135168 | compressed |
+| `COLOR` only, `SAMPLED + COLOR`, `SAMPLED + COLOR + bit 29` | `0xc410000` | 135168 | compressed |
+| `SAMPLED + COLOR + bit 57` | `0` | 86016 | linear |
+| `SAMPLED + COLOR + bit 57 + bit 60` | `0xc410000` | 135168 | compressed |
 
 - The high word separates the two cases in 16 of 16 samples.
 - The sizes match: linear is 208 px x 4 = 832 bytes of stride, 83200 bytes, rounded up to 21 pages. The other case is 256x128 (128-aligned) x 4 = 131072 bytes of body plus a 4096-byte header. That is consistent with AFBC (16x16 superblocks, tiled headers), but the actual modifier flags were **not** verified.
-- The private `NO_AFBC` usage bit (`1 << 29`) has no effect on this allocator; CPU or composer usage is enough to keep a buffer linear. This agrees with [JimVulkan](https://github.com/JimVulkan/mesa-unified-drivers)'s notes on MediaTek's allocator on a Galaxy A31.
+- The old-style private `NO_AFBC` usage bit (bit 29) has no effect on this allocator; CPU or composer usage keeps a buffer linear, as in [JimVulkan](https://github.com/JimVulkan/mesa-unified-drivers)'s notes on MediaTek's allocator on a Galaxy A31. The device's own properties name another bit: `ro.vendor.arm.gralloc.no_afbc_usage_flags` is `0x0200000000000000` with mask `0x1200000000000000`. Requesting bit 57 (`AHARDWAREBUFFER_USAGE_VENDOR_13`) gives a linear GPU-only buffer (86016 bytes, alloc format high word `0`), and adding bit 60 brings the compressed layout back, which fits a rule of the form `(usage & mask) == flags`. Measured on RGBA8 200x100 only.
 
 **Patch 0004** (`u_gralloc_fallback.c`) only acts when the handle matches that fingerprint. High word `0` plus a matching plane stride gives `DRM_FORMAT_MOD_LINEAR`, measured and no longer assumed. A non-zero high word is refused with an explicit error (`vkAllocateMemory` returns `VK_ERROR_INVALID_EXTERNAL_HANDLE`) instead of being silently misread. Any other handle behaves exactly as before.
 

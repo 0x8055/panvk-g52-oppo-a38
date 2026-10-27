@@ -440,7 +440,7 @@ La advertencia del proyecto G720 era correcta, y la pregunta abierta resultó se
 
 **Hacia dónde apuntaba la investigación.** [JimVulkan/mesa-unified-drivers](https://github.com/JimVulkan/mesa-unified-drivers) interpreta directamente el handle de gralloc de ARM. Un "alloc format" de 64 bits guarda el formato HAL en la palabra baja y los bits de layout (AFBC) en la alta; el allocator de MediaTek de un Galaxy A31 se comparó contra `0x311`. Solo conserva `LINEAR` como respaldo para handles que no reconoce. Su parser busca la información del plano en magic+15 (Exynos) o magic+21 (A31). En este teléfono un build del commit `a5010bb` registra "unknown handle layout" (Bannerlator), y las releases r3 y r4 de `mali-panvk` rechazan el handle por completo ("no plane layout matches the handle"), porque aquí la información del plano está en magic+16 y el ancho, el alto y el formato un int antes de lo que el parser espera.
 
-**Método.** Programas pequeños alocan `AHardwareBuffer`s con el allocator del sistema y vuelcan el handle nativo (`AHardwareBuffer_getNativeHandle`): una primera prueba (`tests/panvk-driver-patch/ahb_handle_probe.c`: 64x64 y 500x500, tres usages) y `tests/panvk-driver-patch/ahb_probe2.c` (200x100, RGBA8 y RGBX8, ocho combinaciones de usage).
+**Método.** Programas pequeños alocan `AHardwareBuffer`s con el allocator del sistema y vuelcan el handle nativo (`AHardwareBuffer_getNativeHandle`): una primera prueba (`tests/panvk-driver-patch/ahb_handle_probe.c`: 64x64 y 500x500, tres usages) y `tests/panvk-driver-patch/ahb_probe2.c` (200x100, RGBA8 y RGBX8, diez combinaciones de usage (las dos últimas, con los bits 57 y 60, se añadieron después)).
 
 **Layout del handle en el A38** (3 fds, 62 ints). fd0 no reporta tamaño (`-1`; el código de JimVulkan indica que MediaTek pone `-1` primero), fd1 es el buffer, fd2 es una región de 6480 bytes en todas las muestras. Entre los ints: magic `0x3141592` en `ints[18]`, el alloc format (u64) en `ints[29..30]` y `{stride en bytes, ancho, alto}` del plano 0 en `ints[34..36]`. Otros ints también cambian en los buffers comprimidos (por ejemplo `ints[14]` e `ints[30]`); no se decodificaron.
 
@@ -450,11 +450,13 @@ La advertencia del proyecto G720 era correcta, y la pregunta abierta resultó se
 |---|---|---|---|
 | solo `GPU_SAMPLED` | `0` | 86016 | lineal |
 | `SAMPLED + COLOR` con lectura CPU, escritura CPU o `COMPOSER_OVERLAY` | `0` | 86016 | lineal |
-| solo `COLOR`, `SAMPLED + COLOR`, `SAMPLED + COLOR + NO_AFBC` | `0xc410000` | 135168 | comprimido |
+| solo `COLOR`, `SAMPLED + COLOR`, `SAMPLED + COLOR + bit 29` | `0xc410000` | 135168 | comprimido |
+| `SAMPLED + COLOR + bit 57` | `0` | 86016 | lineal |
+| `SAMPLED + COLOR + bit 57 + bit 60` | `0xc410000` | 135168 | comprimido |
 
 La palabra alta separa los dos casos en 16 de 16 muestras (RGBA8 y RGBX8 dieron resultados idénticos). La primera prueba muestra el mismo patrón: 64x64 con lectura CPU son 16384 bytes y solo-GPU son 69632 (128x128x4 + 4096); 500x500 son 1024000 frente a 1064960 (512x512x4 + 16384).
 
-La aritmética cuadra: el buffer lineal tiene 208 px x 4 = 832 bytes de stride, 83200 bytes, redondeados a 21 páginas. El otro es 256x128 (alineado a 128) x 4 = 131072 bytes de cuerpo más 4096 de header, consistente con AFBC (superbloques de 16x16, headers en tiles). Las flags del modifier **no** se verificaron. El bit privado `NO_AFBC` (`1 << 29`) no tiene efecto en este allocator; basta el uso de CPU o del composer para que el buffer sea lineal, lo que coincide con las notas de JimVulkan sobre el allocator de MediaTek.
+La aritmética cuadra: el buffer lineal tiene 208 px x 4 = 832 bytes de stride, 83200 bytes, redondeados a 21 páginas. El otro es 256x128 (alineado a 128) x 4 = 131072 bytes de cuerpo más 4096 de header, consistente con AFBC (superbloques de 16x16, headers en tiles). Las flags del modifier **no** se verificaron. El bit privado antiguo `NO_AFBC` (bit 29) no tiene efecto en este allocator; basta el uso de CPU o del composer para que el buffer sea lineal, lo que coincide con las notas de JimVulkan sobre el allocator de MediaTek. Las propiedades del propio dispositivo apuntan a otro bit: `ro.vendor.arm.gralloc.no_afbc_usage_flags` es `0x0200000000000000` con máscara `0x1200000000000000`. Pedir el bit 57 (`AHARDWAREBUFFER_USAGE_VENDOR_13`) da un buffer lineal solo-GPU (86016 bytes, palabra alta del alloc format en 0), y si se añade el bit 60 vuelve el layout comprimido, lo que encaja con una regla del tipo `(usage & mask) == flags`. Medido solo con RGBA8 de 200x100.
 
 **El parche 0004** (`src/util/u_gralloc/u_gralloc_fallback.c`) actúa solo cuando el handle encaja con esa huella (3 fds, 62 ints, magic en `ints[18]`). Palabra alta `0` y stride del plano igual a `pixel_stride x bpp` dan `DRM_FORMAT_MOD_LINEAR`. Una palabra alta distinta de cero se rechaza con un error explícito. Cualquier otro handle se comporta como antes.
 
@@ -471,7 +473,7 @@ FAILED vkAllocateMemory ...: VkResult=-1000072003            (panvk_ahb_image_te
 **Callejones sin salida y correcciones.**
 - Se sugirió que el buffer del test original probablemente era AFBC y que por eso `LINEAR` estaba mal. No lo era: el test pide `CPU_READ_RARELY`, que mantiene el buffer lineal. El parche 0003 acertaba para ese buffer, solo que sin demostrarlo.
 - Se consideró la interposición del símbolo `hw_get_module` dentro de un proceso Android real como la razón por la que el gralloc de otro proyecto funcionaba. Descartado: ese driver también registra "Using fallback gralloc implementation" dentro de Bannerlator y de Winlator-Ludashi.
-- Añadir `NO_AFBC` al usage del test era innecesario en este allocator (ver arriba).
+- Añadir el bit antiguo `NO_AFBC` (bit 29) al usage del test era innecesario en este allocator (ver arriba).
 
 **Lo que sigue siendo una suposición.**
 - El parche 0003 sigue siendo necesario cuando quien llama pasa un `DRM_FORMAT_MOD_INVALID` explícito, como hace el wrapper de Winlator según el README de LukeValen. En ese camino no hay handle que inspeccionar, y `LINEAR` sería incorrecto para un buffer solo-GPU.

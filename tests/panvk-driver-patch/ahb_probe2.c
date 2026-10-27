@@ -19,9 +19,10 @@ int main(void) {
   uint64_t co = AHARDWAREBUFFER_USAGE_COMPOSER_OVERLAY;
   struct { const char *n; uint64_t u; } c[] = {
     {"S", S}, {"F", F}, {"S|F", S|F}, {"S|F|cr", S|F|cr}, {"S|F|cw", S|F|cw},
-    {"S|F|comp", S|F|co}, {"S|F|NOAFBC", S|F|NO_AFBC}, {"S|F|comp|NOAFBC", S|F|co|NO_AFBC} };
+    {"S|F|comp", S|F|co}, {"S|F|NOAFBC", S|F|NO_AFBC}, {"S|F|comp|NOAFBC", S|F|co|NO_AFBC},
+    {"S|F|bit57", S|F|(1ULL << 57)}, {"S|F|bit57|bit60", S|F|(1ULL << 57)|(1ULL << 60)} };
   int fm[] = { AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM, AHARDWAREBUFFER_FORMAT_R8G8B8X8_UNORM };
-  for (int f = 0; f < 2; f++) for (int i = 0; i < 8; i++) {
+  for (int f = 0; f < 2; f++) for (int i = 0; i < 10; i++) {
     AHardwareBuffer_Desc d = {0};
     d.width = 200; d.height = 100; d.layers = 1; d.format = fm[f]; d.usage = c[i].u;
     AHardwareBuffer *b = NULL;
